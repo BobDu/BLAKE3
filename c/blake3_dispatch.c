@@ -242,6 +242,10 @@ void blake3_xof_many(const uint32_t cv[8],
   }
 #endif
 #endif
+#if BLAKE3_USE_NEON == 1
+  blake3_xof_many_neon(cv, block, block_len, counter, flags, out, outblocks);
+  return;
+#endif
   for(size_t i = 0; i < outblocks; ++i) {
     blake3_compress_xof(cv, block, block_len, counter + i, flags, out + 64*i);
   }

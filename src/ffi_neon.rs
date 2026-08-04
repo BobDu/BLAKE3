@@ -54,6 +54,28 @@ pub extern "C" fn blake3_compress_in_place_portable(
     }
 }
 
+// blake3_xof_many_neon needs this for output block counts below 4, for the same
+// reason described above.
+#[unsafe(no_mangle)]
+pub extern "C" fn blake3_compress_xof_portable(
+    cv: *const u32,
+    block: *const u8,
+    block_len: u8,
+    counter: u64,
+    flags: u8,
+    out: *mut u8,
+) {
+    unsafe {
+        *(out as *mut [u8; 64]) = crate::portable::compress_xof(
+            &*(cv as *const [u32; 8]),
+            &*(block as *const [u8; 64]),
+            block_len,
+            counter,
+            flags,
+        )
+    }
+}
+
 pub mod ffi {
     unsafe extern "C" {
         pub fn blake3_hash_many_neon(

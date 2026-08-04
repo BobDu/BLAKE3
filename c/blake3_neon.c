@@ -365,3 +365,77 @@ void blake3_hash_many_neon(const uint8_t *const *inputs, size_t num_inputs,
     out = &out[BLAKE3_OUT_LEN];
   }
 }
+
+/*
+ * ----------------------------------------------------------------------------
+ * xof_many_neon
+ * ----------------------------------------------------------------------------
+ */
+
+static void blake3_xof4_neon(const uint32_t cv[8],
+                             const uint8_t block[BLAKE3_BLOCK_LEN],
+                             uint8_t block_len, uint64_t counter, uint8_t flags,
+                             uint8_t out[4 * BLAKE3_BLOCK_LEN]) {
+  uint32x4_t h_vecs[8] = {
+      set1_128(cv[0]), set1_128(cv[1]), set1_128(cv[2]), set1_128(cv[3]),
+      set1_128(cv[4]), set1_128(cv[5]), set1_128(cv[6]), set1_128(cv[7]),
+  };
+  uint32_t block_words[16];
+  load_block_words(block, block_words);
+  // Every output block hashes the same input block, so unlike hash4_neon the
+  // message vectors are broadcasts rather than a transpose.
+  uint32x4_t msg_vecs[16];
+  for (size_t i = 0; i < 16; i++) {
+    msg_vecs[i] = set1_128(block_words[i]);
+  }
+  uint32x4_t counter_low_vec, counter_high_vec;
+  load_counters4(counter, true, &counter_low_vec, &counter_high_vec);
+
+  uint32x4_t v[16] = {
+      h_vecs[0],       h_vecs[1],        h_vecs[2],           h_vecs[3],
+      h_vecs[4],       h_vecs[5],        h_vecs[6],           h_vecs[7],
+      set1_128(IV[0]), set1_128(IV[1]),  set1_128(IV[2]),     set1_128(IV[3]),
+      counter_low_vec, counter_high_vec, set1_128(block_len), set1_128(flags),
+  };
+  round_fn4(v, msg_vecs, 0);
+  round_fn4(v, msg_vecs, 1);
+  round_fn4(v, msg_vecs, 2);
+  round_fn4(v, msg_vecs, 3);
+  round_fn4(v, msg_vecs, 4);
+  round_fn4(v, msg_vecs, 5);
+  round_fn4(v, msg_vecs, 6);
+  for (size_t i = 0; i < 8; i++) {
+    v[i] = xor_128(v[i], v[i + 8]);
+    v[i + 8] = xor_128(v[i + 8], h_vecs[i]);
+  }
+
+  transpose_vecs_128(&v[0]);
+  transpose_vecs_128(&v[4]);
+  transpose_vecs_128(&v[8]);
+  transpose_vecs_128(&v[12]);
+  for (size_t i = 0; i < 4; i++) {
+    storeu_128(v[i + 0], &out[(4 * i + 0) * sizeof(uint32x4_t)]);
+    storeu_128(v[i + 4], &out[(4 * i + 1) * sizeof(uint32x4_t)]);
+    storeu_128(v[i + 8], &out[(4 * i + 2) * sizeof(uint32x4_t)]);
+    storeu_128(v[i + 12], &out[(4 * i + 3) * sizeof(uint32x4_t)]);
+  }
+}
+
+void blake3_xof_many_neon(const uint32_t cv[8],
+                          const uint8_t block[BLAKE3_BLOCK_LEN],
+                          uint8_t block_len, uint64_t counter, uint8_t flags,
+                          uint8_t *out, size_t outblocks) {
+  while (outblocks >= 4) {
+    blake3_xof4_neon(cv, block, block_len, counter, flags, out);
+    counter += 4;
+    outblocks -= 4;
+    out = &out[4 * BLAKE3_BLOCK_LEN];
+  }
+  while (outblocks > 0) {
+    // See the comment in hash_one_neon about compress_neon.
+    blake3_compress_xof_portable(cv, block, block_len, counter, flags, out);
+    counter += 1;
+    outblocks -= 1;
+    out = &out[BLAKE3_BLOCK_LEN];
+  }
+}

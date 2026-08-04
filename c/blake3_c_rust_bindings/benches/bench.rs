@@ -94,6 +94,7 @@ fn bench_single_compression_sse41(b: &mut Bencher) {
 }
 
 #[bench]
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 fn bench_single_compression_avx512(b: &mut Bencher) {
     if !blake3_c_rust_bindings::avx512_detected() {
         return;
@@ -186,6 +187,7 @@ fn bench_many_chunks_avx2(b: &mut Bencher) {
 }
 
 #[bench]
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 fn bench_many_chunks_avx512(b: &mut Bencher) {
     if !blake3_c_rust_bindings::avx512_detected() {
         return;
@@ -278,6 +280,7 @@ fn bench_many_parents_avx2(b: &mut Bencher) {
 }
 
 #[bench]
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 fn bench_many_parents_avx512(b: &mut Bencher) {
     if !blake3_c_rust_bindings::avx512_detected() {
         return;
@@ -297,6 +300,65 @@ fn bench_many_parents_neon(b: &mut Bencher) {
         b,
         blake3_c_rust_bindings::ffi::neon::blake3_hash_many_neon,
         4,
+    );
+}
+
+#[allow(unused)]
+type XofManyFn = unsafe extern "C" fn(
+    cv: *const u32,
+    block: *const u8,
+    block_len: u8,
+    counter: u64,
+    flags: u8,
+    out: *mut u8,
+    outblocks: usize,
+);
+
+#[allow(unused)]
+fn bench_xof_many_fn(b: &mut Bencher, f: XofManyFn, outblocks: usize) {
+    let mut block = RandomInput::new(b, BLOCK_LEN);
+    // The throughput of interest is the extendable output, not the one input
+    // block that RandomInput just counted.
+    b.bytes = (outblocks * BLOCK_LEN) as u64;
+    let mut out = vec![0u8; outblocks * BLOCK_LEN];
+    b.iter(|| unsafe {
+        f(
+            [0u32; 8].as_ptr(),
+            block.get().as_ptr(),
+            BLOCK_LEN as u8,
+            0,
+            0,
+            out.as_mut_ptr(),
+            outblocks,
+        )
+    });
+}
+
+// 16 blocks is a multiple of every implementation's degree, so none of them
+// fall back to compress_xof for a remainder.
+const XOF_MANY_BLOCKS: usize = 16;
+
+#[bench]
+#[cfg(all(unix, any(target_arch = "x86", target_arch = "x86_64")))]
+fn bench_xof_many_avx512(b: &mut Bencher) {
+    if !blake3_c_rust_bindings::avx512_detected() {
+        return;
+    }
+    bench_xof_many_fn(
+        b,
+        blake3_c_rust_bindings::ffi::x86::blake3_xof_many_avx512,
+        XOF_MANY_BLOCKS,
+    );
+}
+
+#[bench]
+#[cfg(feature = "neon")]
+fn bench_xof_many_neon(b: &mut Bencher) {
+    // When "neon" is on, NEON support is assumed.
+    bench_xof_many_fn(
+        b,
+        blake3_c_rust_bindings::ffi::neon::blake3_xof_many_neon,
+        XOF_MANY_BLOCKS,
     );
 }
 
